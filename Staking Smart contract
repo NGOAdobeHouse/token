@@ -1,61 +1,78 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
+/**
+ * @title IAdobeHouse
+ * @dev Interface for the AdobeHouse token contract.
+ */
 interface IAdobeHouse {
     function transfer(address recipient, uint256 amount) external returns (bool);
     function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
 }
 
+/**
+ * @title StakingContract
+ * @dev Contract to allow users to stake AdobeHouse tokens and earn rewards.
+ */
 contract StakingContract {
     IAdobeHouse private tokenContract;
-    uint256 private constant MIN_STAKE_AMOUNT = 100 * 10**18; // Assuming 18 decimals
-    uint256 private constant CONTRACT_EXPIRATION_TIMESTAMP = 1672444800; // End of 2024
-    uint256 private constant PENALTY_PERCENTAGE = 50; // 50% penalty for early unstaking
-
-    // APY values hard-coded into the contract
-    uint256 private constant ONE_MONTH_APY = 3; // 3% for one month
-    uint256 private constant ONE_YEAR_APY = 15; // 15% for one year
-
-    enum StakingDuration { OneMonth, OneYear }
+    uint256 private constant MIN_STAKE_AMOUNT = 100 * 10**18; // Minimum staking amount (assuming 18 decimals)
+    uint256 private constant REWARD_PERCENTAGE = 25; // Reward percentage for one-year staking
+    uint256 private constant STAKING_PERIOD = 365 days; // Staking period (one year)
+    uint256 private constant CONTRACT_EXPIRATION_TIMESTAMP = 1672444800; // Contract expiration date (end of 2024)
 
     struct StakeInfo {
-        uint256 amount;
-        uint256 startTime;
-        StakingDuration duration;
+        uint256 amount;      // Amount staked
+        uint256 startTime;   // Start time of staking
     }
 
-    mapping(address => StakeInfo) private stakingInfo;
+    mapping(address => StakeInfo) private stakingInfo; // Mapping to store staking information
+    bool private reentrancyLock = false; // Mutex lock for reentrancy protection
 
     constructor(address _tokenContract) {
         require(_tokenContract != address(0), "Invalid token contract address");
         tokenContract = IAdobeHouse(_tokenContract);
     }
 
-    function stakeTokens(uint256 amount, StakingDuration duration) external {
+    /**
+     * @dev Modifier to prevent reentrant calls.
+     */
+    modifier preventReentrancy() {
+        require(!reentrancyLock, "Reentrant call detected");
+        reentrancyLock = true;
+        _;
+        reentrancyLock = false;
+    }
+
+    /**
+     * @dev Allows users to stake tokens.
+     * @param amount The amount of tokens to stake.
+     */
+    function stakeTokens(uint256 amount) external preventReentrancy {
         require(msg.sender != address(0), "Invalid staker address");
         require(amount >= MIN_STAKE_AMOUNT, "Amount must be greater than the minimum stake amount");
+        require(block.timestamp + STAKING_PERIOD <= CONTRACT_EXPIRATION_TIMESTAMP, "Staking period exceeds contract expiration date");
+        require((CONTRACT_EXPIRATION_TIMESTAMP - block.timestamp) >= STAKING_PERIOD, "Less than 12 months remaining until contract expiration");
         require(tokenContract.transferFrom(msg.sender, address(this), amount), "Transfer failed");
 
         stakingInfo[msg.sender] = StakeInfo({
             amount: amount,
-            startTime: block.timestamp,
-            duration: duration
+            startTime: block.timestamp
         });
     }
 
-    function unstakeTokens() external {
+    /**
+     * @dev Allows users to unstake tokens and claim rewards.
+     */
+    function unstakeTokens() external preventReentrancy {
         require(msg.sender != address(0), "Invalid staker address");
         StakeInfo storage stake = stakingInfo[msg.sender];
         require(stake.amount > 0, "No staked tokens to unstake");
+        require(block.timestamp >= stake.startTime + STAKING_PERIOD, "Tokens are locked during the staking period");
 
-        // Calculate reward
-        uint256 reward = calculateReward(stake);
-
-        // Apply penalty if unstaking before the set period
-        if (block.timestamp < stake.startTime + stakingPeriod(stake.duration)) {
-            reward = (reward * (100 - PENALTY_PERCENTAGE)) / 100;
-        }
-
+        uint256 remainingMonths = (CONTRACT_EXPIRATION_TIMESTAMP - stake.startTime) / 30 days;
+        uint256 proratedRewardPercentage = (REWARD_PERCENTAGE * remainingMonths) / 12;
+        uint256 reward = (stake.amount * proratedRewardPercentage) / 100;
         uint256 totalAmount = stake.amount + reward;
 
         // Transfer staked tokens and reward back to the staker
@@ -63,37 +80,5 @@ contract StakingContract {
 
         // Reset staking info
         delete stakingInfo[msg.sender];
-    }
-
-    function stakingPeriod(StakingDuration duration) private pure returns (uint256) {
-        if (duration == StakingDuration.OneMonth) return 30 days;
-        if (duration == StakingDuration.OneYear) return 365 days;
-        revert("Invalid staking duration");
-    }
-
-    function calculateReward(StakeInfo memory stake) private pure returns (uint256) {
-        if (block.timestamp >= CONTRACT_EXPIRATION_TIMESTAMP) return 0;
-
-        uint256 stakingPeriod = block.timestamp - stake.startTime;
-        uint256 annualRewardRate;
-
-        if (stake.duration == StakingDuration.OneMonth) {
-            annualRewardRate = ONE_MONTH_APY; // 3%
-        } else { // OneYear
-            annualRewardRate = ONE_YEAR_APY; // 15%
-        }
-
-        // Calculate the reward using higher intermediate precision
-        uint256 reward = stake.amount * annualRewardRate * stakingPeriod;
-
-        // Divide by 100 (for percentage) and 365 days (for annualization)
-        reward = reward / (100 * 365 days);
-
-        // If staking for less than a year, apply pro-rata calculation
-        if (stakingPeriod < 365 days) {
-            reward = (reward * stakingPeriod) / (365 days);
-        }
-
-        return reward;
     }
 }

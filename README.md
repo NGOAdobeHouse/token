@@ -13,12 +13,11 @@ Table of Contents
 - Contact Information
 
 Token Specifications
-
-Name: AdobeHouse
-Symbol: ADOBE
-Decimals: 18
-Max Supply: 1,000,000,000 ADOBE
-Presale Supply: 100,000,000 ADOBE
+- Name: AdobeHouse
+- Symbol: ADOBE
+- Decimals: 18
+- Max Supply: 1,000,000,000 ADOBE
+- Presale Supply: 100,000,000 ADOBE
 
 Token Contract Functions
 
